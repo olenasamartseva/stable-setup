@@ -38,6 +38,77 @@ Choose node type:
 EOF
 }
 
+# ------------- BINARY CHECK / INSTALL -------------
+
+ensure_stabled() {
+  if command -v stabled >/dev/null 2>&1; then
+    echo "✅ Found stabled binary at: $(command -v stabled)"
+    stabled version || true
+    return
+  fi
+
+  echo "⚠ 'stabled' binary not found in PATH."
+
+  # Basic OS/arch sanity
+  local OS ARCH
+  OS="$(uname -s)"
+  ARCH="$(uname -m)"
+
+  if [[ "${OS}" != "Linux" ]]; then
+    echo "This auto-install helper only supports Linux."
+    echo "Please install 'stabled' manually and rerun this script."
+    exit 1
+  fi
+
+  if [[ "${ARCH}" != "x86_64" && "${ARCH}" != "amd64" ]]; then
+    echo "This auto-install helper assumes x86_64/amd64."
+    echo "Detected arch: ${ARCH}"
+    echo "Please install 'stabled' manually and rerun this script."
+    exit 1
+  fi
+
+  echo
+  echo "I can download the latest Linux AMD64 testnet binary from:"
+  echo "  https://stable-testnet-data.s3.us-east-1.amazonaws.com/stabled-latest-linux-amd64-testnet.tar.gz"
+  echo
+
+  read -rp "Download and install 'stabled' to /usr/bin? [y/N]: " ans
+  case "${ans}" in
+    y|Y)
+      ;;
+    *)
+      echo "Aborting. Please install 'stabled' manually and rerun."
+      exit 1
+      ;;
+  esac
+
+  if [[ "$(id -u)" -ne 0 ]]; then
+    echo "You are not root. Please run this script as root (or via sudo) to install into /usr/bin."
+    exit 1
+  fi
+
+  local TMP_DIR
+  TMP_DIR="$(mktemp -d)"
+  echo "➤ Downloading stabled binary into ${TMP_DIR} ..."
+  (
+    cd "${TMP_DIR}"
+    wget -O stabled-latest-linux-amd64-testnet.tar.gz \
+      "https://stable-testnet-data.s3.us-east-1.amazonaws.com/stabled-latest-linux-amd64-testnet.tar.gz"
+    tar -xvzf stabled-latest-linux-amd64-testnet.tar.gz
+    mv stabled /usr/bin/stabled
+    chmod +x /usr/bin/stabled
+  )
+  rm -rf "${TMP_DIR}"
+
+  if ! command -v stabled >/dev/null 2>&1; then
+    echo "❌ Failed to install 'stabled' into /usr/bin."
+    exit 1
+  fi
+
+  echo "✅ 'stabled' installed at: $(command -v stabled)"
+  stabled version || true
+}
+
 # ------------- INPUT -------------
 
 prompt_moniker() {
@@ -158,7 +229,6 @@ start_node() {
 
   cd "${HOME_DIR}"
 
-  # Build common start command
   cmd=(
     stabled start
     --chain-id "${CHAIN_ID}"
@@ -171,7 +241,6 @@ start_node() {
   echo "  ${cmd[*]}"
   echo
 
-  # Run and stream logs
   "${cmd[@]}" 2>&1 | tee -a "${HOME_DIR}/node.log"
 }
 
@@ -233,6 +302,9 @@ backup_secrets() {
 # ------------- MAIN -------------
 
 main() {
+  # backup uses stabled too, so ensure binary first
+  ensure_stabled
+
   if [[ "${1-}" == "backup" ]]; then
     backup_secrets
     exit 0
